@@ -312,7 +312,9 @@ class FortiManagerClient:
     async def _detect_version(self) -> tuple[int, int, int]:
         """Detect and cache FortiManager version.
 
-        Returns tuple of (major, minor, patch).
+        Returns tuple of (major, minor, patch). Only a successful probe is
+        cached. On failure the cache stays empty, so this call uses the
+        legacy script endpoint and the next call probes again.
         """
         if self._fmg_version is not None:
             return self._fmg_version
@@ -332,8 +334,11 @@ class FortiManagerClient:
             )
             logger.info(f"Detected FortiManager version: {self._fmg_version}")
         except Exception as e:
-            logger.warning(f"Failed to detect FMG version, assuming 7.0.0: {e}")
-            self._fmg_version = (7, 0, 0)
+            # Do NOT cache the fallback: a probe that failed while FMG was
+            # unreachable would otherwise pin the legacy script endpoint
+            # until restart. The next call probes again.
+            logger.warning(f"Failed to detect FMG version, assuming 7.0.0 for this call: {e}")
+            return (7, 0, 0)
 
         return self._fmg_version
 

@@ -1211,6 +1211,49 @@ class TestScriptTargetMapping:
         assert params["filter"] == [["target", "weird_op", "remote_device"]]
 
 
+class TestVersionDetection:
+    """A failed version probe must not pin the legacy script endpoint.
+
+    The version picks the script endpoint (7.6+ uses /pm/config, older uses
+    /dvmdb). A probe that fails while FortiManager is unreachable says
+    nothing about the version, so the next script call has to probe again.
+    """
+
+    @pytest.mark.asyncio
+    async def test_failed_probe_is_retried_by_the_next_script_call(
+        self,
+        mock_client: FortiManagerClient,
+        mock_fmg_instance: MagicMock,
+    ) -> None:
+        """First probe fails, second succeeds: the second call reaches the 7.6+ endpoint."""
+        status_replies: list[Any] = [
+            RuntimeError("FortiManager unreachable"),
+            (0, {"Version": "v7.6.5-build3653 251215 (GA.M)"}),
+        ]
+
+        def fake_get(url: str, **kwargs: Any) -> tuple[int, Any]:
+            if url == "/sys/status":
+                reply = status_replies.pop(0)
+                if isinstance(reply, Exception):
+                    raise reply
+                return reply
+            return (0, [])
+
+        mock_fmg_instance.get.side_effect = fake_get
+
+        await mock_client.list_scripts(adom="root")
+        await mock_client.list_scripts(adom="root")
+
+        script_urls = [
+            c.args[0] for c in mock_fmg_instance.get.call_args_list if c.args[0] != "/sys/status"
+        ]
+        assert script_urls == [
+            "/dvmdb/adom/root/script",
+            "/pm/config/adom/root/obj/fmg/script",
+        ]
+        assert mock_client.fmg_version == (7, 6, 5)
+
+
 class TestMoveResilience:
     """`move()` must get the same reconnect-once + retry treatment as the
     other verbs (it previously bypassed `_execute_resilient` entirely)."""
